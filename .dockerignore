@@ -1,0 +1,10 @@
+.git
+.ai
+.codex-tasks
+**/bin
+**/obj
+data
+.env*
+**/settings.json
+**/secrets
+*.log

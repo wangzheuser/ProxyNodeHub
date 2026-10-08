@@ -27,42 +27,33 @@ public static class KnownRepoLoader
         AppContext.BaseDirectory, "known_repos.json");
 
     private static Dictionary<string, List<KnownRepoEntry>>? _cache;
+    private static readonly object Gate = new();
 
     /// <summary>加载已知仓库映射 (文件名 → 条目列表)</summary>
     private static Dictionary<string, List<KnownRepoEntry>> LoadConfig()
     {
-        if (_cache != null) return _cache;
-
-        _cache = new Dictionary<string, List<KnownRepoEntry>>(StringComparer.OrdinalIgnoreCase);
-
-        try
+        lock (Gate)
         {
-            if (File.Exists(ConfigPath))
+            if (_cache != null) return _cache;
+            var next = new Dictionary<string, List<KnownRepoEntry>>(StringComparer.OrdinalIgnoreCase);
+            var config = JsonSerializer.Deserialize(File.ReadAllText(ConfigPath), CoreJsonContext.Default.KnownRepoConfig)
+                ?? throw new InvalidDataException("Invalid known repository configuration.");
+            foreach (var entry in config.known_repos)
             {
-                var json = File.ReadAllText(ConfigPath);
-                var config = JsonSerializer.Deserialize(json, AppJsonContext.Default.KnownRepoConfig);
-                if (config != null)
+                if (string.IsNullOrEmpty(entry.full_name)) continue;
+                if (!next.TryGetValue(entry.full_name, out var list))
                 {
-                    foreach (var entry in config.known_repos)
-                    {
-                        if (string.IsNullOrEmpty(entry.full_name)) continue;
-                        if (!_cache.TryGetValue(entry.full_name, out var list))
-                        {
-                            list = new List<KnownRepoEntry>();
-                            _cache[entry.full_name] = list;
-                        }
-                        list.Add(entry);
-                    }
+                    list = new List<KnownRepoEntry>();
+                    next[entry.full_name] = list;
                 }
+                list.Add(entry);
             }
+            return _cache = next;
         }
-        catch { /* 解析失败时返回空配置 */ }
-
-        return _cache;
     }
 
     /// <summary>获取指定仓库的已知订阅链接</summary>
-    public static List<SubscriptionLink> GetKnownLinks(string fullName)
+    public static List<SubscriptionLink> GetKnownLinks(string fullName, string branch = "main")
     {
         var config = LoadConfig();
         if (!config.TryGetValue(fullName, out var entries))
@@ -71,7 +62,7 @@ public static class KnownRepoLoader
         return entries.Select(e => new SubscriptionLink
         {
             Name = e.path,
-            Url = e.is_absolute_url ? e.path : BuildUrl(fullName, e.path),
+            Url = e.is_absolute_url ? e.path : GitHubService.RawUrl(fullName, e.path, branch),
             Type = e.type,
             NodeCount = -1,
             IsValid = true,
@@ -79,11 +70,6 @@ public static class KnownRepoLoader
         }).ToList();
     }
 
-    private static string BuildUrl(string fullName, string path)
-    {
-        return $"https://raw.githubusercontent.com/{fullName}/main/{path}";
-    }
-
     /// <summary>强制重新加载配置 (编辑后调用)</summary>
-    public static void Reload() => _cache = null;
+    public static void Reload() { lock (Gate) _cache = null; }
 }

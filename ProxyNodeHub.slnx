@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="core/ProxyNodeHub.Core.csproj" />
     <Project Path="src/ProxyNodeHub.csproj" />
+    <Project Path="web/ProxyNodeHub.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ProxyNodeHub.Tests/ProxyNodeHub.Tests.csproj" />

@@ -3,29 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace ProxyNodeHub;
 
-// ── JSON 源码生成上下文 (裁剪安全 + 序列化零反射/更快) ──
-//
-// PropertyNameCaseInsensitive 是必需的：内核 /api/results 返回 camelCase
-// （speed / subTag / ipRisk），而这里声明的是 PascalCase 字段。
-// 只用大小写不敏感匹配，不设 CamelCase 命名策略 —— 后者会让我们自己
-// 写出的 cache.json / settings.json 键名也变成小写开头，与既有文件不兼容。
-[JsonSourceGenerationOptions(IncludeFields = true, PropertyNameCaseInsensitive = true)]
-[JsonSerializable(typeof(CacheData), TypeInfoPropertyName = "CacheData")]
-[JsonSerializable(typeof(List<RepoInfo>), TypeInfoPropertyName = "RepoList")]
-[JsonSerializable(typeof(SubscriptionLink), TypeInfoPropertyName = "SubscriptionLink")]
-[JsonSerializable(typeof(GitHubCommit), TypeInfoPropertyName = "GitHubCommit")]
-[JsonSerializable(typeof(CommitDetail), TypeInfoPropertyName = "CommitDetail")]
-[JsonSerializable(typeof(GitHubUser), TypeInfoPropertyName = "GitHubUser")]
-[JsonSerializable(typeof(BatchRepoResult), TypeInfoPropertyName = "BatchRepoResult")]
-[JsonSerializable(typeof(GitHubRepo), TypeInfoPropertyName = "GitHubRepo")]
-[JsonSerializable(typeof(AppSettings), TypeInfoPropertyName = "AppSettings")]
-[JsonSerializable(typeof(GitHubVariables), TypeInfoPropertyName = "GitHubVariables")]
-[JsonSerializable(typeof(KnownRepoConfig), TypeInfoPropertyName = "KnownRepoConfig")]
-[JsonSerializable(typeof(SpeedTestSnapshot), TypeInfoPropertyName = "SpeedTestSnapshot")]
-[JsonSerializable(typeof(SpeedTestStatus), TypeInfoPropertyName = "SpeedTestStatus")]
-[JsonSerializable(typeof(List<SpeedStat>), TypeInfoPropertyName = "SpeedStatList")]
-internal partial class AppJsonContext : JsonSerializerContext;
-
 // ── 模型 ──
 /// <summary>
 /// 一条待测订阅及其来源仓库。来源决定测速结果能映射回哪个仓库 ——

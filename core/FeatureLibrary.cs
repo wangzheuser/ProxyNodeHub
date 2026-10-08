@@ -31,53 +31,63 @@ public class RepoFeature
 }
 
 /// <summary>特征库 (本地持久化)</summary>
-public static class FeatureLibrary
+public sealed class FeatureLibrary
 {
-    private static readonly string LibPath = Path.Combine(
+    public static FeatureLibrary Default { get; } = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ProxyNodeHub", "features.json");
+        "ProxyNodeHub"));
 
-    private static Dictionary<string, RepoFeature> _features = new();
-    private static bool _loaded = false;
+    private readonly string LibPath;
+    private readonly object gate = new();
+    private static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, WriteIndented = true };
+    private Dictionary<string, RepoFeature> _features = new();
+    private bool _loaded;
 
-    private static void EnsureLoaded()
+    public FeatureLibrary(string directory) => LibPath = Path.Combine(directory, "features.json");
+
+    private void EnsureLoaded()
     {
         if (_loaded) return;
-        try
-        {
-            if (File.Exists(LibPath))
-            {
-                var json = File.ReadAllText(LibPath);
-                _features = JsonSerializer.Deserialize<Dictionary<string, RepoFeature>>(json) ?? new();
-            }
-        }
-        catch { _features = new(); }
+        if (File.Exists(LibPath))
+            _features = JsonSerializer.Deserialize<Dictionary<string, RepoFeature>>(File.ReadAllText(LibPath), JsonOptions)
+                ?? throw new InvalidDataException("Invalid feature library.");
         _loaded = true;
     }
 
-    public static RepoFeature? Get(string fullName)
+    private static RepoFeature Copy(RepoFeature feature) => new()
     {
-        EnsureLoaded();
-        return _features.TryGetValue(fullName, out var f) ? f : null;
-    }
+        FullName = feature.FullName, Category = feature.Category, KnownSubPaths = feature.KnownSubPaths.ToList(),
+        TotalNodes = feature.TotalNodes, LastAnalyzed = feature.LastAnalyzed,
+        AnalysisCount = feature.AnalysisCount, IsReliable = feature.IsReliable
+    };
 
-    public static void Save(RepoFeature feature)
+    public RepoFeature? Get(string fullName)
     {
-        EnsureLoaded();
-        _features[feature.FullName] = feature;
-        try
+        lock (gate)
         {
-            var dir = Path.GetDirectoryName(LibPath);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(LibPath, JsonSerializer.Serialize(_features, new JsonSerializerOptions { WriteIndented = true }));
+            EnsureLoaded();
+            return _features.TryGetValue(fullName, out var f) ? Copy(f) : null;
         }
-        catch { }
     }
 
-    public static List<RepoFeature> GetReliableRepos()
+    public void Save(RepoFeature feature)
     {
-        EnsureLoaded();
-        return _features.Values.Where(f => f.IsReliable && f.KnownSubPaths.Count > 0).ToList();
+        lock (gate)
+        {
+            EnsureLoaded();
+            var next = new Dictionary<string, RepoFeature>(_features) { [feature.FullName] = Copy(feature) };
+            AtomicFile.Write(LibPath, JsonSerializer.Serialize(next, JsonOptions));
+            _features = next;
+        }
+    }
+
+    public List<RepoFeature> GetReliableRepos()
+    {
+        lock (gate)
+        {
+            EnsureLoaded();
+            return _features.Values.Where(f => f.IsReliable && f.KnownSubPaths.Count > 0).Select(Copy).ToList();
+        }
     }
 }
 

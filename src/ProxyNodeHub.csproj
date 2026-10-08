@@ -24,15 +24,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- token 已改为明文存 exe 同目录 settings.json，不再用 DPAPI 加密 -->
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- 用 Content 而非 None：None+CopyToOutputDirectory 只影响 build 输出，
-         dotnet publish 不会带上它，发布出去的 exe 会缺 known_repos.json -->
-    <Content Include="known_repos.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <ProjectReference Include="../core/ProxyNodeHub.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

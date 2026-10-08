@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f4f1ea">
+  <meta name="description" content="ProxyNodeHub 内网订阅来源管理台">
+  <title>ProxyNodeHub · 节点来源档案</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/controls.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <noscript><p class="notice">管理台需要 JavaScript。请启用后重新加载；后台发现任务不受影响。</p></noscript>
+
+  <section id="login-view" class="login-view" aria-labelledby="login-title">
+    <div class="login-intro">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">PN</span><span>ProxyNodeHub<small>节点来源档案</small></span></div>
+      <p class="eyebrow">DISCOVER. VERIFY. COLLECT.</p>
+      <h1 id="login-title">让订阅来源，<br>有迹可循。</h1>
+      <p class="login-description">从 GitHub 发现持续更新的节点仓库，整理可靠来源，再交给 subs-check 检测。</p>
+      <div class="login-footnote"><span class="edition">WEB / 内网工作台</span><p>与桌面客户端共享发现核心。<br>关闭浏览器后，后台任务继续运行。</p></div>
+    </div>
+    <div class="login-panel">
+      <p class="eyebrow">ADMINISTRATOR ACCESS</p>
+      <h2>进入工作台</h2>
+      <p class="muted">使用部署时设置的管理员密码。</p>
+      <form id="login-form">
+        <label for="password">管理员密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-error">
+        <p id="login-error" class="field-error" role="alert" hidden></p>
+        <button id="login-button" class="button primary wide" type="submit" disabled>正在连接服务…</button>
+      </form>
+      <p class="fine-print">密码不会保存在此页面。内网 HTTP 连接未加密，请勿直接暴露到公网。</p>
+      <button id="session-retry" class="button text-button" type="button" hidden>重新连接服务</button>
+    </div>
+  </section>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#discover" aria-label="ProxyNodeHub 发现仓库"><span class="brand-mark" aria-hidden="true">PN</span><span>ProxyNodeHub<small>节点来源档案</small></span></a>
+      <p class="nav-caption">工作台 / WORKSPACE</p>
+      <nav aria-label="主要导航">
+        <a href="#discover" data-page="discover" aria-current="page"><span class="nav-index" aria-hidden="true">01</span>发现仓库<span id="nav-repo-count" class="nav-count">—</span></a>
+        <a href="#favorites" data-page="favorites"><span class="nav-index" aria-hidden="true">02</span>我的收藏<span id="nav-favorite-count" class="nav-count">—</span></a>
+        <a href="#checker" data-page="checker"><span class="nav-index" aria-hidden="true">03</span>订阅检测</a>
+        <a href="#history" data-page="history"><span class="nav-index" aria-hidden="true">04</span>运行记录</a>
+        <a href="#features" data-page="features"><span class="nav-index" aria-hidden="true">05</span>学习记录</a>
+        <a href="#settings" data-page="settings"><span class="nav-index" aria-hidden="true">06</span>服务设置</a>
+      </nav>
+      <div class="sidebar-bottom"><p class="edition">DOCKER WEB EDITION</p><p>一个核心，两种工作方式。</p><button id="logout-button" class="button text-button" type="button">退出登录 <span aria-hidden="true">↗</span></button></div>
+    </aside>
+
+    <main id="main" tabindex="-1">
+      <div class="topline"><span class="eyebrow">SOURCE INTELLIGENCE / 来源管理</span><span id="connection-label" class="connection-label">正在同步</span></div>
+      <header class="page-header">
+        <div><p id="page-kicker" class="eyebrow stamp-text">01 / DISCOVERY</p><h1 id="page-title">发现仓库</h1><p id="page-description" class="page-description">从持续更新的仓库中，找到值得保留的来源。</p></div>
+        <div class="run-actions"><button id="cancel-button" class="button" type="button" hidden>取消本次发现</button><button id="explore-button" class="button" type="button" disabled>探索新来源</button><button id="refresh-button" class="button primary" type="button" disabled><span aria-hidden="true">↻</span> 开始发现</button></div>
+      </header>
+
+      <div id="connection-error" class="notice error-notice" role="alert" hidden><p id="connection-error-text"></p><button id="state-retry" class="button compact" type="button">重试连接</button></div>
+      <div id="action-notice" class="notice" role="status" hidden><p id="action-notice-text"></p><button id="dismiss-notice" class="icon-button" type="button" aria-label="关闭提示">×</button></div>
+      <section id="manual-copy" class="manual-copy" hidden aria-label="手动复制"><label for="manual-copy-text">浏览器未允许自动复制，请选中下方内容后使用系统复制操作</label><textarea id="manual-copy-text" readonly rows="4"></textarea><button id="manual-copy-close" class="button" type="button">关闭并清空</button></section>
+
+      <section class="run-strip" aria-label="后台任务状态">
+        <div class="run-state"><span id="run-indicator" class="status-dot" aria-hidden="true"></span><div><strong id="run-title">正在读取服务状态</strong><p id="run-description">已生成的结果会保留在服务端。</p></div></div>
+        <dl class="run-times"><div><dt>上次有效结果</dt><dd id="last-result">—</dd></div><div><dt>下次自动发现</dt><dd id="next-run">—</dd></div></dl>
+        <progress id="run-progress" aria-label="仓库发现进度" hidden></progress>
+      </section>
+      <p id="source-warning" class="source-warning" hidden></p>
+
+      <section id="repositories-panel" aria-label="仓库列表">
+        <div class="collection-toolbar">
+          <div class="filter-group"><label class="search-field" for="repo-search"><span>筛选仓库</span><input id="repo-search" type="search" placeholder="名称或描述" autocomplete="off"></label><label for="repo-sort">排序<select id="repo-sort"><option value="score">评分</option><option value="nodes">节点数量</option><option value="updated">最近更新</option><option value="stars">Star 数量</option><option value="commits">日均提交</option><option value="age">仓库年龄</option><option value="inactive">未更新天数</option><option value="processing">处理类型</option><option value="links">订阅数量</option><option value="name">仓库名称</option></select></label><label for="repo-direction">方向<select id="repo-direction"><option value="desc">降序</option><option value="asc">升序</option></select></label></div>
+          <div class="export-group"><label for="export-scope">导出范围<select id="export-scope"><option value="all">当前列表全部</option><option value="filtered">当前筛选</option><option value="selected">选中集合</option></select></label><label for="export-format">导出格式<select id="export-format"><option value="links">订阅链接 · TXT</option><option value="json">仓库档案 · JSON</option><option value="plain">节点 URI · TXT</option><option value="base64">节点 URI · Base64</option></select></label><button id="export-button" class="button" type="button" disabled>导出</button></div>
+        </div>
+        <details class="advanced-options"><summary>数值筛选与显示列</summary><div class="form-grid"><label for="min-commits">最低日均提交<input id="min-commits" type="number" min="0" step="0.1" placeholder="不限"><small>近 7 天提交数 ÷ 7。</small></label><label for="min-age">最小仓库年龄 · 天<input id="min-age" type="number" min="0" step="1" placeholder="不限"></label><label for="max-inactive">最多未更新 · 天<input id="max-inactive" type="number" min="0" step="1" placeholder="不限"></label></div><label class="checkbox-row"><input id="repo-extra-columns" type="checkbox"><span>显示 Star、日均提交、库龄与未更新天数</span></label></details>
+        <p id="view-preferences-note" class="toolbar-note" role="status">数值筛选对发现与收藏都生效；筛选数值、排序与显示列自动记在本机浏览器，不保存搜索词、密钥或私密订阅。</p>
+        <fieldset id="bulk-fields" class="bulk-toolbar"><legend class="sr-only">仓库批量操作</legend><label class="inline-check"><input id="select-filtered" type="checkbox">全选当前筛选</label><span id="selected-count" class="muted">未选择</span><button id="clear-selection" class="button compact" type="button">清空选择</button><button id="copy-links" class="button compact" type="button">复制订阅</button><button id="copy-names" class="button compact" type="button">复制仓库名</button><button id="bulk-favorite" class="button compact" type="button">收藏选中</button><button id="bulk-unfavorite" class="button compact" type="button">取消收藏</button><button id="bulk-recheck" class="button compact" type="button">重新检查</button></fieldset>
+        <p id="export-help" class="toolbar-note">节点 URI 导出不包含 Clash 配置；需要完整来源时请选择订阅链接。</p>
+        <div class="collection-heading"><p id="collection-summary">正在读取仓库档案…</p><span>评分是来源线索，不代表节点可用率</span></div>
+        <div class="collection-layout">
+          <div class="repository-list">
+            <div class="repo-scroll"><table id="repo-table" class="repo-table"><caption class="sr-only">仓库发现结果；勾选批量操作，选择仓库名称查看订阅详情</caption><thead><tr><th scope="col"><span class="sr-only">选择与收藏</span></th><th scope="col">仓库 / 来源</th><th scope="col" class="numeric">评分</th><th scope="col" class="numeric">节点</th><th scope="col">最近更新</th><th scope="col" class="extra-column">Star</th><th scope="col" class="extra-column">日均提交</th><th scope="col" class="extra-column">库龄 · 天</th><th scope="col" class="extra-column">未更新 · 天</th></tr></thead><tbody id="repo-rows"></tbody></table></div>
+            <div id="repo-empty" class="empty-state" hidden><span class="empty-index" aria-hidden="true">—</span><h2 id="repo-empty-title">还没有仓库档案</h2><p id="repo-empty-description">开始一次发现，结果会在完成后显示于此。</p><button id="clear-filter" class="button" type="button" hidden>清除筛选</button></div>
+          </div>
+          <aside id="repo-detail" class="repo-detail" aria-label="仓库详情"><p class="eyebrow">REPOSITORY DOSSIER</p><h2>来源详情</h2><p class="muted">选择左侧仓库，查看更新时间、评分与发现的订阅链接。</p><div class="detail-note">先发现，再验证。<br>订阅连通性与速度由 subs-check 检测。</div></aside>
+        </div>
+      </section>
+
+      <section id="settings-panel" class="content-panel" aria-labelledby="settings-heading" hidden>
+        <div class="section-heading"><div><p class="eyebrow">SCHEDULER</p><h2 id="settings-heading">发现计划</h2></div><span id="settings-save-state" class="muted">设置保存在服务端</span></div>
+        <form id="settings-form" class="settings-form">
+          <fieldset id="settings-fields"><legend class="sr-only">发现计划设置</legend><div class="form-grid">
+            <label for="refresh-hours">刷新间隔 · 小时<input id="refresh-hours" name="refreshHours" type="number" min="1" max="24" required><small>范围 1–24 小时；按服务端时间调度。</small></label>
+            <label for="repo-count">每次分析仓库数<input id="repo-count" name="repoCount" type="number" min="1" max="100" required><small>范围 1–100；数量越多，请求与耗时越多。</small></label>
+            <label for="inactive-days">最近更新范围 · 天<input id="inactive-days" name="inactiveDays" type="number" min="1" max="60" required><small>搜索最近 1–60 天内有更新的仓库。</small></label>
+            <label for="analysis-concurrency">同时分析仓库数<input id="analysis-concurrency" type="number" min="1" max="10" required><small>1–10；并发越高，越容易触发限流。</small></label>
+            <label for="log-retention-days">日志保留 · 天<input id="log-retention-days" type="number" min="1" max="30" required></label>
+            <label for="download-mirror">订阅下载镜像<select id="download-mirror"><option value="">直连</option><option value="auto">自动选择</option></select><small>仅用于公开下载；不发送 GitHub Token。</small></label>
+          </div><label class="checkbox-row" for="auto-refresh"><input id="auto-refresh" name="autoRefresh" type="checkbox"><span>自动发现<small>即使关闭浏览器，服务仍按计划运行。</small></span></label>
+          <details class="advanced-options"><summary>探索新来源时的排除规则</summary><p class="fine-print">仅「探索新来源」应用以下规则；普通发现与自动刷新仍检查完整来源。</p><label class="checkbox-row"><input id="skip-searched" type="checkbox"><span>跳过搜索记忆中的仓库</span></label><label class="checkbox-row"><input id="skip-favorites" type="checkbox"><span>跳过已收藏仓库</span></label><label for="search-history-days">搜索记忆保留 · 天<input id="search-history-days" type="number" min="1" max="30" required></label></details></fieldset>
+          <div class="form-footer"><button id="settings-save" class="button primary" type="submit" disabled>保存设置</button><p id="settings-message" role="status" class="muted"></p></div>
+        </form>
+        <div class="form-footer"><button id="mirror-test" class="button" type="button">测试固定镜像</button><p id="mirror-message" class="muted" role="status">测试不会更改下载设置。</p></div>
+        <div class="setting-note"><div><p class="eyebrow">GITHUB ACCESS</p><h2>GitHub Token</h2><p><span id="token-status" class="status-label">正在读取配置状态</span></p></div><form id="github-form" class="connection-form" autocomplete="off"><fieldset id="github-fields"><legend class="sr-only">GitHub 连接设置</legend><p id="github-source" class="muted">正在读取来源…</p><label for="github-mode">配置来源<select id="github-mode"><option value="custom">Web 自定义</option><option value="environment">恢复环境变量</option><option value="disabled">禁用 Token</option></select></label><label for="github-token">新 GitHub Token<input id="github-token" type="password" autocomplete="new-password" spellcheck="false"><small>设置或替换时输入新值，已保存值不会回显。禁用后使用公开额度。</small></label></fieldset><button id="github-save" class="button" type="submit">保存 GitHub 配置</button><p id="github-message" role="status" class="fine-print"></p></form></div>
+        <div class="setting-note"><div><p class="eyebrow">CHECKER CONNECTION</p><h2>检测器连接</h2><p class="fine-print">Web 配置优先于环境变量。当前任务使用开始时的连接，下次操作生效。</p></div><form id="connection-form" class="connection-form" autocomplete="off"><fieldset id="connection-fields"><legend class="sr-only">检测器连接设置</legend><p id="connection-source" class="muted">正在读取来源…</p><label for="connection-mode">配置来源<select id="connection-mode"><option value="custom">Web 自定义</option><option value="environment">恢复环境变量</option><option value="disabled">禁用连接</option></select></label><label for="checker-api-url">API 地址<input id="checker-api-url" type="url" placeholder="http://宿主机内网IP:8199" autocomplete="off"></label><label for="checker-web-url">原管理台地址 · 可选<input id="checker-web-url" type="url" autocomplete="off"></label><label for="checker-api-key">新 API 密钥<input id="checker-api-key" type="password" autocomplete="new-password" spellcheck="false"><small>首次自定义必填；已有自定义密钥时留空保留。</small></label></fieldset><button id="connection-save" class="button" type="submit">保存检测器连接</button><p id="connection-message" role="status" class="fine-print"></p></form></div>
+        <p class="fine-print">密钥只写入服务端，不存浏览器；离开设置页会清空未提交密钥。更改检测器 API 地址时必须重新输入密钥，避免将旧密钥发给另一台服务。HTTP 传输不加密，请仅在可信内网配置。</p>
+      </section>
+
+      <section id="history-panel" class="content-panel" aria-label="运行历史与日志" hidden>
+        <div class="section-heading"><div><p class="eyebrow">RUN HISTORY</p><h2>发现记录</h2></div><span class="muted">最新记录在前</span></div>
+        <div class="table-scroll"><table class="data-table"><caption class="sr-only">后台发现任务历史</caption><thead><tr><th scope="col">开始时间</th><th scope="col">结果</th><th scope="col">订阅数</th><th scope="col">完成时间 / 说明</th></tr></thead><tbody id="history-rows"></tbody></table></div>
+        <p id="history-empty" class="inline-empty" hidden>尚无运行记录。完成首次发现后，这里会记录结果与失败原因。</p>
+        <div class="section-heading logs-heading"><div><p class="eyebrow">SERVICE LOG</p><h2>发现日志</h2></div><div class="inline-actions"><label for="log-run">查看轮次<select id="log-run"><option value="">当前日志</option></select></label><button id="logs-refresh" class="button" type="button">读取日志</button><button id="logs-download" class="button" type="button">下载日志</button><button id="logs-clear" class="button" type="button">清空全部日志</button></div></div>
+        <ol id="log-list" class="log-list"></ol><p id="logs-empty" class="inline-empty" hidden>服务尚未产生可显示的日志。</p>
+        <div class="section-heading logs-heading"><div><p class="eyebrow">SEARCH MEMORY</p><h2>搜索记忆</h2></div><div class="inline-actions"><button id="search-history-refresh" class="button" type="button">读取搜索记忆</button><button id="search-history-clear" class="button" type="button">清空搜索记忆</button></div></div><p id="search-history-message" class="fine-print" role="status">探索时可跳过近期搜过的仓库；清空不会删除仓库、收藏或运行历史。</p><ol id="search-history-list" class="log-list"></ol>
+      </section>
+
+      <section id="features-panel" class="content-panel" aria-labelledby="features-heading" hidden>
+        <div class="section-heading"><div><p class="eyebrow">LEARNED PATHS</p><h2 id="features-heading">已学习的订阅路径</h2></div><button id="features-refresh" class="button" type="button">重新读取</button></div>
+        <p class="muted">发现成功的路径会留存在服务端，供下一轮优先探测。学习记录不是测速结果。</p>
+        <label class="search-field feature-search" for="feature-search"><span>筛选学习记录</span><input id="feature-search" type="search" placeholder="仓库名称或订阅路径" autocomplete="off"></label>
+        <p id="features-message" class="inline-empty" role="status">打开此页时读取学习记录。</p>
+        <div class="table-scroll"><table class="data-table features-table"><caption class="sr-only">学习的仓库订阅路径</caption><thead><tr><th scope="col">仓库 / 分类</th><th scope="col">已学习路径</th><th scope="col">节点</th><th scope="col">分析次数</th><th scope="col">最近分析</th></tr></thead><tbody id="feature-rows"></tbody></table></div>
+      </section>
+
+      <section id="checker-panel" class="content-panel" aria-labelledby="checker-heading" hidden>
+        <div class="section-heading"><div><p class="eyebrow">SUBS-CHECK HANDOFF</p><h2 id="checker-heading">把来源交给检测器</h2></div><span id="checker-connection" class="status-label">正在读取接入状态</span></div>
+        <p class="section-intro">ProxyNodeHub 负责发现来源，subs-check 负责连通性与测速。两者独立运行，不重复启动检测内核。</p>
+        <div class="feed-section"><h3>订阅来源清单</h3><p class="muted">在 subs-check 的 <code>sub-urls-remote</code> 中添加此地址。检测器必须能访问该地址；跨容器时请使用宿主机内网 IP。</p><label for="feed-url" class="sr-only">订阅来源清单地址</label><div class="copy-row"><input id="feed-url" type="url" readonly><button id="copy-feed" class="button" type="button">复制地址</button><a id="open-feed" class="button" target="_blank" rel="noopener noreferrer">打开清单 <span aria-hidden="true">↗</span></a></div><p class="fine-print">首次发现成功前，清单会返回 503；发现失败时继续提供上次有效结果。此清单匿名可读，不含 GitHub Token。</p></div>
+        <div id="checker-unconfigured" class="connection-guide" hidden><h3>尚未配置 subs-check API</h3><p>订阅清单仍可独立使用。可在服务设置中配置 API 地址与密钥，无需重建容器。</p><a href="#settings" class="button">配置检测器连接</a><p class="fine-print">API 密钥只在服务端使用，不会显示在页面中。</p></div>
+        <div id="checker-controls" hidden>
+          <div class="checker-actions"><button id="checker-refresh" class="button" type="button">读取状态与结果</button><button id="checker-run" class="button primary" type="button">开始一次检测</button><button id="checker-stop" class="button" type="button" disabled>停止检测</button><a id="checker-web" class="button text-button" target="_blank" rel="noopener noreferrer" hidden>打开 subs-check <span aria-hidden="true">↗</span></a></div>
+          <p id="checker-message" class="muted" role="status">点击读取，查看检测器返回的实时数据。</p>
+          <p class="fine-print">编辑配置时请勿同时在其他管理台修改；端口等参数保存后可能仍需由原检测器重启生效。</p>
+          <details class="advanced-options"><summary>检测参数与来源</summary><p class="fine-print">只编辑无凭据参数，保留未知配置。完整 YAML、升级与进程管理请使用原检测器；保存不会自动开始检测。</p><div class="inline-actions"><button id="checker-config-read" class="button" type="button">读取检测配置</button><button id="checker-version-read" class="button" type="button">读取版本</button><span id="checker-version" class="muted"></span></div><p id="checker-config-message" class="fine-print" role="status">先读取配置，再修改需要调整的字段。</p><form id="checker-config-form" hidden><fieldset id="checker-config-fields" class="form-grid"><legend class="sr-only">检测器参数</legend></fieldset><button id="checker-config-save" class="button" type="submit">保存改动参数</button></form><form id="checker-sources-form" hidden><h3>追加检测来源</h3><p id="checker-source-count" class="fine-print"></p><label class="checkbox-row"><input id="checker-source-current" type="checkbox"><span>当前发现结果的订阅</span></label><label class="checkbox-row"><input id="checker-source-favorites" type="checkbox"><span>收藏仓库的订阅</span></label><label for="checker-manual-urls">手动订阅 URL · 每行一个<textarea id="checker-manual-urls" rows="4" autocomplete="off" spellcheck="false"></textarea><small>仅追加到检测器；不会进入公开订阅清单，也不回显已保存的私密 URL。</small></label><button id="checker-sources-save" class="button" type="submit">追加选定来源</button></form></details>
+          <details class="advanced-options"><summary>检测日志与生成产物</summary><div class="inline-actions"><button id="checker-logs-read" class="button" type="button">读取检测日志</button><label for="checker-download-format">已有产物<select id="checker-download-format"><option value="clash">Clash YAML</option><option value="mihomo">Mihomo YAML</option><option value="base64">Base64</option></select></label><button id="checker-download" class="button" type="button">下载已有产物</button></div><p class="fine-print">下载原检测器最近生成的文件；没有产物时会明确报错。</p><pre id="checker-logs" tabindex="0" aria-label="检测器日志">尚未读取</pre></details>
+          <dl id="checker-stats" class="checker-stats"></dl>
+          <div class="section-heading"><div><p class="eyebrow">CHECKED NODES</p><h2>节点检测结果</h2></div><p id="checker-result-time" class="muted">尚未读取检测结果</p></div>
+          <div class="collection-toolbar"><label class="search-field feature-search" for="node-search"><span>筛选检测节点</span><input id="node-search" type="search" placeholder="名称、协议、地区或来源" autocomplete="off"></label><label for="node-sort">节点排序<select id="node-sort"><option value="original">检测器顺序</option><option value="speed-desc">速度降序</option><option value="speed-asc">速度升序</option><option value="name">节点名称</option></select></label><label class="inline-check"><input id="node-positive-speed" type="checkbox">只看正速度节点</label></div>
+          <p id="checker-node-summary" class="toolbar-note">检测中的进度与上次完成的结果独立显示。</p>
+          <p class="fine-print">速度为 0 可能表示未测速，不等于失活。来源统计仅统计已保留节点；均速与最快速度仅使用正速度样本，不推算通过率。</p><details class="advanced-options"><summary>按来源查看保留节点与速度</summary><ul id="node-source-counts" class="source-counts"></ul></details>
+          <div class="table-scroll node-table-scroll"><table class="data-table node-table"><caption class="sr-only">subs-check 节点检测结果，选择名称查看参数</caption><thead><tr><th scope="col">名称</th><th scope="col">协议</th><th scope="col">国家 / 地区</th><th scope="col">速度</th><th scope="col">媒体检测</th></tr></thead><tbody id="node-rows"></tbody></table></div>
+          <div id="node-pagination" class="pagination" hidden><span id="node-page-label"></span><div><button id="node-previous" class="button" type="button">上一页</button><button id="node-next" class="button" type="button">下一页</button></div></div>
+          <p id="node-empty" class="inline-empty">读取检测器后，这里会显示最近一次完成的节点结果。</p>
+          <section id="node-detail" class="node-detail" aria-label="节点参数详情" hidden></section>
+          <div class="checker-output"><details><summary>查看状态原始 JSON</summary><pre id="checker-status-output" tabindex="0" aria-label="subs-check 状态 JSON">尚未读取</pre></details><details><summary>查看结果原始 JSON</summary><p class="fine-print">仅显示检测器返回的结果参数，不重建订阅或凭证。</p><pre id="checker-results-output" tabindex="0" aria-label="subs-check 结果 JSON">尚未读取</pre></details></div>
+        </div>
+      </section>
+      <footer class="workspace-footer"><span>ProxyNodeHub</span><span>来源会变化，验证不可省略。</span><a href="https://github.com/goodnightzsj/ProxyNodeHub" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></footer>
+    </main>
+  </div>
+  <dialog id="confirmation-dialog" class="confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+    <p class="eyebrow stamp-text">PLEASE CONFIRM / 操作确认</p>
+    <h2 id="confirmation-title">确认这项更改</h2>
+    <p id="confirmation-message"></p>
+    <div class="confirmation-actions"><button id="confirmation-cancel" class="button" type="button">取消，保持不变</button><button id="confirmation-accept" class="button primary" type="button">确认继续</button></div>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "Settings": { "RefreshHours": 6, "RepoCount": 10, "InactiveDays": 7, "AutoRefresh": false },
+  "Current": {
+    "GeneratedAt": "2026-10-07T12:00:00Z",
+    "Repositories": [
+      { "FullName": "fixture/alpha", "Description": "合成测试来源 <img src=x onerror=alert(1)>", "Stars": 3, "LastPush": "2026-10-07T10:00:00Z", "AgeDays": 200, "DaysInactive": 0, "CommitsLast7Days": 14, "DistinctActiveDays": 7, "Score": 80, "TotalNodes": 2, "Branch": "main", "ProcessingType": "自动化", "Links": [ { "Name": "sub.txt", "Url": "https://raw.githubusercontent.com/fixture/alpha/main/sub.txt", "Type": "Base64", "NodeCount": 2, "IsValid": true, "IsAnalyzed": true } ] },
+      { "FullName": "fixture/beta", "Description": "合成低频来源", "Stars": 30, "LastPush": "2026-10-02T10:00:00Z", "AgeDays": 90, "DaysInactive": 5, "CommitsLast7Days": 7, "DistinctActiveDays": 2, "Score": 40, "TotalNodes": 1, "Branch": "main", "ProcessingType": "人工", "Links": [ { "Name": "sub.txt", "Url": "https://raw.githubusercontent.com/fixture/beta/main/sub.txt", "Type": "Base64", "NodeCount": 1, "IsValid": true, "IsAnalyzed": true } ] }
+    ],
+    "Subscriptions": [ "https://raw.githubusercontent.com/fixture/alpha/main/sub.txt", "https://raw.githubusercontent.com/fixture/beta/main/sub.txt" ]
+  },
+  "Favorites": [],
+  "History": [ { "StartedAt": "2026-10-07T11:59:00Z", "FinishedAt": "2026-10-07T12:00:00Z", "Success": true, "Subscriptions": 2, "Error": null, "Logs": [ { "At": "2026-10-07T12:00:00Z", "Message": "合成测试完成；不是实际采集结果。" } ] } ]
+}

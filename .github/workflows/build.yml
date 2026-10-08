@@ -1,11 +1,35 @@
-name: Build & Test
+name: Build, Test & Publish
 
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Core and Web regression
+        run: dotnet run --project tests/ProxyNodeHub.Tests -c Release
+      - name: Frontend self-check
+        run: node web/wwwroot/app.js --self-test
+
   build:
     runs-on: windows-latest
     steps:
@@ -14,7 +38,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Restore
         run: dotnet restore src/ProxyNodeHub.csproj
@@ -23,4 +49,79 @@ jobs:
         run: dotnet build src/ProxyNodeHub.csproj -c Release --nologo --no-restore
 
       - name: Test
-        run: dotnet test tests/ProxyNodeHub.Tests/ProxyNodeHub.Tests.csproj -c Release --nologo
+        run: dotnet run --project tests/ProxyNodeHub.Tests -c Release
+
+      - name: Publish Windows client
+        run: dotnet publish src/ProxyNodeHub.csproj -c Release -r win-x64 --self-contained true -o dist/windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProxyNodeHub-windows-x64
+          path: dist/windows/
+
+  docker:
+    needs: [core, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build Linux amd64 image
+        run: >-
+          docker build --platform linux/amd64
+          --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+          --label "org.opencontainers.image.revision=$GITHUB_SHA"
+          -t proxynodehub:ci .
+      - name: HTTP integration and restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name proxynodehub-ci -p 127.0.0.1:8389:8080 \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+            -v proxynodehub-ci:/data -e AUTO_REFRESH=false \
+            -e ADMIN_PASSWORD=synthetic-test-password-only proxynodehub:ci
+          wait_ready() {
+            for attempt in {1..30}; do
+              if curl -fsS http://127.0.0.1:8389/live; then return 0; fi
+              sleep 2
+            done
+            docker logs proxynodehub-ci
+            return 1
+          }
+          wait_ready
+          node tests/http-smoke.mjs
+          docker restart proxynodehub-ci
+          wait_ready
+          node tests/http-smoke.mjs
+      - name: Publish tested image to Docker Hub
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${DOCKERHUB_USERNAME:?Set the DOCKERHUB_USERNAME repository variable}"
+          : "${DOCKERHUB_TOKEN:?Set the DOCKERHUB_TOKEN repository secret}"
+          image="$DOCKERHUB_USERNAME/proxynodehub"
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          docker tag proxynodehub:ci "$image:sha-$GITHUB_SHA"
+          docker push "$image:sha-$GITHUB_SHA"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag=latest
+          fi
+          docker tag proxynodehub:ci "$image:$tag"
+          docker push "$image:$tag"
+          printf 'Published `%s:sha-%s` and `%s:%s` after all tests passed.\n' \
+            "$image" "$GITHUB_SHA" "$image" "$tag" >> "$GITHUB_STEP_SUMMARY"
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logout
+          docker rm -f proxynodehub-ci || true
+          docker volume rm proxynodehub-ci || true

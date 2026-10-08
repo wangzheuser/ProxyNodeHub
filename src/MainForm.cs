@@ -1857,13 +1857,13 @@ public class MainForm : Form
         if (_contextRepo == null || _isRunning) return;
         var repo = _contextRepo;
         Log($"重新检查: {repo.FullName}");
-        var commits = await _github.GetRecentCommitsAsync(repo.FullName, 7);
-        repo.CommitsLast7Days = commits.Count;
-        repo.DistinctActiveDays = GitHubAnalyzer.CountDistinctDays(commits);
-        repo.ProcessingType = GitHubAnalyzer.DetectProcessingType(commits);
-        repo.Links = await SubscriptionFinder.FindLinksAsync(_github, repo.FullName, default, msg => Log(msg), repo.Branch);
-        repo.TotalNodes = GitHubAnalyzer.BestNodeCount(repo);
-        repo.Score = GitHubAnalyzer.CalculateScore(repo);
+        try { await AnalyzeSingleRepo(repo, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            Log($"重新检查失败: {ex.Message}");
+            ShowToast("重新检查失败 · 打开日志查看详情");
+            return;
+        }
         ApplyFilters();
         UpdateDetails();
     }
@@ -2082,18 +2082,7 @@ public class MainForm : Form
         }
 
         var targetCount = (int)_numRepos.Value;
-        var since = DateTime.UtcNow.AddDays(-7).ToString("yyyy-MM-dd");
-        var queries = new[]
-        {
-            $"v2ray nodes pushed:>{since}",
-            $"free proxy subscription pushed:>{since}",
-            $"clash nodes pushed:>{since}",
-            $"免费节点 pushed:>{since}",
-            $"v2ray 订阅 pushed:>{since}",
-            $"free v2ray pushed:>{since}",
-            $"trojan nodes pushed:>{since}",
-            $"sing-box subscription pushed:>{since}"
-        };
+        var queries = DiscoveryEngine.Queries();
 
         var seen = new HashSet<string>();
         var found = new List<RepoInfo>();
@@ -2346,101 +2335,8 @@ public class MainForm : Form
 
     /// <summary>分析仓库提交历史, 失败自动重试 (逐条重试, 非批量)</summary>
     /// <summary>分析单个仓库: 提交历史 + 订阅链接 + 节点统计 (含重试)</summary>
-    private async Task AnalyzeSingleRepo(RepoInfo repo, CancellationToken ct)
-    {
-        const int maxRetries = 3;
-
-        Log($"┌─ {repo.FullName}");
-
-        // --- 分析提交历史 ---
-        for (int attempt = 0; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                if (attempt > 0)
-                {
-                    Log($"│  [重试 {attempt}] 获取提交历史...");
-                    await Task.Delay(800 * attempt, ct);
-                }
-                Log($"│  获取提交历史...");
-                var commits = await _github.GetRecentCommitsAsync(repo.FullName, 7, ct);
-                repo.CommitsLast7Days = commits.Count;
-                repo.DistinctActiveDays = GitHubAnalyzer.CountDistinctDays(commits);
-                repo.ProcessingType = GitHubAnalyzer.DetectProcessingType(commits);
-                repo.CommitsAnalyzed = true;
-                Log($"│  ✓ 提交: {commits.Count} 次 (活跃 {repo.DistinctActiveDays} 天) [{repo.ProcessingType}]");
-                break;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex)
-            {
-                if (attempt < maxRetries)
-                {
-                    Log($"│  ⚠ 提交获取失败 ({ex.Message}), 重试 {attempt + 1}/{maxRetries}...");
-                }
-                else
-                {
-                    Log($"│  ✗ 提交分析失败: {ex.Message}");
-                    repo.CommitsLast7Days = 0;
-                    repo.ProcessingType = "分析失败";
-                    repo.CommitsAnalyzed = true;
-                }
-            }
-        }
-
-        // --- 分析订阅链接 ---
-        for (int attempt = 0; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                if (attempt > 0)
-                {
-                    Log($"│  [重试 {attempt}] 获取订阅链接...");
-                    await Task.Delay(800 * attempt, ct);
-                }
-                Log($"│  探测订阅链接...");
-                repo.Links = await SubscriptionFinder.FindLinksAsync(_github, repo.FullName, ct, msg => Log(msg), repo.Branch);
-                repo.TotalNodes = GitHubAnalyzer.BestNodeCount(repo);
-
-                if (repo.Links.Count > 0)
-                {
-                    var validLinks = repo.Links.Where(l => l.NodeCount > 0).ToList();
-                    if (validLinks.Count > 0)
-                    {
-                        Log($"│  ✓ 链接: {repo.Links.Count} 条 (有效 {validLinks.Count}), 节点: {repo.TotalNodes}");
-                        foreach (var l in validLinks)
-                            Log($"│    ● {l.Name} ({l.Type}) = {l.NodeCount} 节点");
-                    }
-                    else
-                    {
-                        Log($"│  ○ 链接: {repo.Links.Count} 条 (均未验证到节点)");
-                    }
-                }
-                else
-                {
-                    Log($"│  ✗ 未找到订阅链接");
-                }
-                break;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex)
-            {
-                if (attempt < maxRetries)
-                {
-                    Log($"│  ⚠ 链接获取失败 ({ex.Message}), 重试 {attempt + 1}/{maxRetries}...");
-                }
-                else
-                {
-                    Log($"│  ✗ 链接分析失败: {ex.Message}");
-                    repo.Links = new List<SubscriptionLink>();
-                    repo.TotalNodes = 0;
-                }
-            }
-        }
-
-        repo.Score = GitHubAnalyzer.CalculateScore(repo);
-        Log($"└─ 完成 [评分: {repo.Score}]");
-    }
+    private Task AnalyzeSingleRepo(RepoInfo repo, CancellationToken ct) =>
+        DiscoveryEngine.AnalyzeAsync(_github, repo, ct, Log);
 
 
 

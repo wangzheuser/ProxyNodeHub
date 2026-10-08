@@ -21,14 +21,16 @@ public class ProxyMirror
     public bool IsDefault;           // 是否为默认(直连)
 }
 
-public class GitHubService
+public class GitHubService : IDisposable
 {
     private readonly HttpClient _httpApi;
     private readonly HttpClient _httpRaw;
     private readonly string? _token;
+    private readonly bool restrictPublicSources;
+    private int failedDownloads;
+    public int FailedDownloads => Volatile.Read(ref failedDownloads);
 
     private const string ApiBase = "https://api.github.com";
-    private const string RawBase = "https://raw.githubusercontent.com";
     private const string RawBaseLen = "https://raw.githubusercontent.com/";
 
     /// <summary>
@@ -61,11 +63,57 @@ public class GitHubService
         new ProxyMirror { Name = "jsDelivr (testing)", Prefix = "https://testingcf.jsdelivr.net/", Type = "CDN", IsJsDelivr = true },
     };
 
-    public GitHubService(string? token = null)
+    // Freeze the permitted destinations before desktop latency tests mutate their records.
+    private static readonly (string Name, string Prefix, string Type, bool IsDefault, bool IsJsDelivr)[] PublicMirrorDefinitions =
+        AllProxies.Select(p => (p.Name, p.Prefix, p.Type, p.IsDefault, p.IsJsDelivr)).ToArray();
+    public static IReadOnlyList<ProxyMirror> PublicMirrors => PublicMirrorDefinitions.Select(p => new ProxyMirror
+    { Name = p.Name, Prefix = p.Prefix, Type = p.Type, IsDefault = p.IsDefault, IsJsDelivr = p.IsJsDelivr }).ToArray();
+
+    public async Task ConfigurePublicMirrorAsync(string name, CancellationToken ct = default)
+    {
+        if (name == "auto")
+        {
+            var results = await TestPublicMirrorsAsync(ct);
+            CurrentProxy = results.FirstOrDefault(p => p.LatencyMs >= 0)
+                ?? throw new HttpRequestException("直连和固定镜像均未通过测试。");
+        }
+        else CurrentProxy = name.Length == 0 ? null : PublicMirrors.FirstOrDefault(p => p.Name == name)
+            ?? throw new ArgumentException("不支持该下载镜像。");
+    }
+
+    public static async Task<List<ProxyMirror>> TestPublicMirrorsAsync(CancellationToken ct = default,
+        HttpMessageHandler? handler = null)
+    {
+        using var http = new HttpClient(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false })
+        { Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 1024 * 1024 };
+        http.DefaultRequestHeaders.Add("User-Agent", UserAgent);
+        using var limit = new SemaphoreSlim(4, 4);
+        const string sample = "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub";
+        var results = await Task.WhenAll(PublicMirrors.Select(async mirror =>
+        {
+            await limit.WaitAsync(ct);
+            try
+            {
+                var timer = Stopwatch.StartNew();
+                using var response = await http.GetAsync(mirror.IsDefault ? sample : BuildProxiedUrl(sample, mirror)!, ct);
+                var content = response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : "";
+                mirror.LatencyMs = NodeParser.CountNodes(content) > 0 ? timer.ElapsedMilliseconds : -2;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { mirror.LatencyMs = -2; }
+            finally { limit.Release(); }
+            return mirror;
+        }));
+        return results.OrderBy(p => p.LatencyMs < 0 ? long.MaxValue : p.LatencyMs).ThenBy(p => !p.IsDefault).ToList();
+    }
+
+    public GitHubService(string? token = null, bool restrictPublicSources = false,
+        HttpMessageHandler? apiHandler = null, HttpMessageHandler? rawHandler = null)
     {
         _token = token;
-        _httpApi = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-        _httpRaw = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        this.restrictPublicSources = restrictPublicSources;
+        _httpApi = CreateClient(apiHandler, false, 8);
+        _httpRaw = CreateClient(rawHandler, !restrictPublicSources, 5);
         foreach (var h in new[] { _httpApi, _httpRaw })
         {
             h.DefaultRequestHeaders.Add("User-Agent", UserAgent);
@@ -75,51 +123,49 @@ public class GitHubService
             _httpApi.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
     }
 
+    private static HttpClient CreateClient(HttpMessageHandler? handler, bool redirects, int timeout) =>
+        new(handler ?? new SocketsHttpHandler
+        {
+            AllowAutoRedirect = redirects,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+        }) { Timeout = TimeSpan.FromSeconds(timeout), MaxResponseContentBufferSize = 8 * 1024 * 1024 };
+
+    public void Dispose() { _httpApi.Dispose(); _httpRaw.Dispose(); }
+
     // ── REST: 搜索 ──
     public async Task<List<GitHubRepo>> SearchReposAsync(string query, int perPage, CancellationToken ct = default)
     {
-        try
-        {
+        ct.ThrowIfCancellationRequested();
             var url = $"{ApiBase}/search/repositories?q={Uri.EscapeDataString(query)}&sort=updated&order=desc&per_page={perPage}";
-            var resp = await _httpApi.GetAsync(url, ct);
+            using var resp = await _httpApi.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             var items = doc.RootElement.GetProperty("items");
             return items.EnumerateArray()
-                .Select(i => JsonSerializer.Deserialize(i.GetRawText(), AppJsonContext.Default.GitHubRepo)!)
+                .Select(i => JsonSerializer.Deserialize(i.GetRawText(), CoreJsonContext.Default.GitHubRepo)
+                    ?? throw new JsonException("Missing repository object."))
                 .ToList();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException) { return new List<GitHubRepo>(); }  // 超时
-        catch { return new List<GitHubRepo>(); }
     }
 
     // ── REST: 最近提交 ──
     public async Task<List<GitHubCommit>> GetRecentCommitsAsync(string fullName, int days = 7, CancellationToken ct = default)
     {
-        try
-        {
+        ct.ThrowIfCancellationRequested();
             var since = DateTime.UtcNow.AddDays(-days).ToString("yyyy-MM-ddTHH:mm:ssZ");
-            var resp = await _httpApi.GetAsync($"{ApiBase}/repos/{fullName}/commits?since={since}&per_page=100", ct);
+            using var resp = await _httpApi.GetAsync($"{ApiBase}/repos/{fullName}/commits?since={since}&per_page=100", ct);
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadAsStringAsync(ct);
-            return JsonSerializer.Deserialize<List<GitHubCommit>>(json) ?? new();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException) { return new List<GitHubCommit>(); }  // 超时
-        catch { return new List<GitHubCommit>(); }
+            return JsonSerializer.Deserialize<List<GitHubCommit>>(json) ?? throw new JsonException("Missing commit array.");
     }
 
     // ── REST: 获取仓库文件树 ──
-    public async Task<List<string>> GetFileTreeAsync(string fullName, CancellationToken ct = default)
+    public async Task<List<string>> GetFileTreeAsync(string fullName, CancellationToken ct = default, string branch = "main")
     {
-        try
-        {
-            var resp = await _httpApi.GetAsync($"{ApiBase}/repos/{fullName}/git/trees/main?recursive=1", ct);
-            if (!resp.IsSuccessStatusCode)
-                resp = await _httpApi.GetAsync($"{ApiBase}/repos/{fullName}/git/trees/master?recursive=1", ct);
-            if (!resp.IsSuccessStatusCode) return new List<string>();
+        ct.ThrowIfCancellationRequested();
+            using var resp = await _httpApi.GetAsync($"{ApiBase}/repos/{fullName}/git/trees/{Uri.EscapeDataString(branch)}?recursive=1", ct);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return new();
+            resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             var tree = doc.RootElement.GetProperty("tree");
@@ -134,9 +180,6 @@ public class GitHubService
                 }
             }
             return files;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { return new List<string>(); }
     }
 
     // ── REST: 获取 README.md 内容 ──
@@ -200,6 +243,23 @@ public class GitHubService
     // ── 下载 raw 文件 (使用当前选中的代理) ──
     public async Task<string?> GetUrlAsync(string url, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
+        // Desktop keeps its mirror selection; an unattended Web host only fetches
+        // supported public sources and cannot follow redirects into the LAN.
+        if (restrictPublicSources)
+        {
+            if (!IsAllowedSubscription(url))
+                throw new InvalidDataException("Subscription URL is outside supported public sources.");
+            if (CurrentProxy is { IsDefault: false })
+            {
+                // Resolve by fixed name, never trust a caller-supplied prefix or follow mirror redirects.
+                var mirror = PublicMirrors.FirstOrDefault(p => p.Name == CurrentProxy.Name)
+                    ?? throw new InvalidDataException("Unsupported public download mirror.");
+                var proxied = BuildProxiedUrl(url, mirror);
+                if (proxied is not null) return await TryGetAsync(proxied, ct);
+            }
+            return await TryGetAsync(url, ct);
+        }
         // 1. 如果选了代理, 优先用代理
         if (CurrentProxy != null && !CurrentProxy.IsDefault)
         {
@@ -257,36 +317,31 @@ public class GitHubService
     {
         try
         {
-            var resp = await _httpRaw.GetAsync(url, ct);
-            if (!resp.IsSuccessStatusCode) return null;
+            using var resp = await _httpRaw.GetAsync(url, ct);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+            resp.EnsureSuccessStatusCode();
             return await resp.Content.ReadAsStringAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;  // 真正的用户取消
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
-            return null;  // HttpClient 超时, 视为网络失败而非取消
+            Interlocked.Increment(ref failedDownloads);
+            Trace.TraceWarning("Subscription download failed: {0}", ex.GetType().Name);
+            return null;
         }
-        catch { return null; }
     }
 
-    public async Task<string?> GetRawFileAsync(string fullName, string path, string branch = "main", CancellationToken ct = default)
-    {
-        // 真实分支优先。仓库默认分支是 master 时，先前实现会先浪费一次
-        // main 的 404 再回退；且调用方拿到的 URL 仍写死 main，得到 404 死链。
-        var candidates = new List<string>();
-        if (!string.IsNullOrEmpty(branch)) candidates.Add(branch);
-        foreach (var b in new[] { "main", "master" })
-            if (!candidates.Contains(b)) candidates.Add(b);
+    public static bool IsAllowedSubscription(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+        uri.IsDefaultPort && uri.UserInfo.Length == 0 && uri.Query.Length == 0 &&
+        (uri.Host == "raw.githubusercontent.com" || uri.Host == "nodes.udptoos.com");
 
-        foreach (var b in candidates)
-        {
-            var content = await GetUrlAsync($"{RawBase}/{fullName}/{b}/{path}", ct);
-            if (!string.IsNullOrEmpty(content)) return content;
-            if (ct.IsCancellationRequested) return null;
-        }
-        return null;
-    }
+    public static string RawUrl(string fullName, string path, string branch) =>
+        $"https://raw.githubusercontent.com/{fullName}/{Uri.EscapeDataString(branch)}/{string.Join('/', path.Split('/').Select(Uri.EscapeDataString))}";
+
+    public Task<string?> GetRawFileAsync(string fullName, string path, string branch = "main", CancellationToken ct = default) =>
+        GetUrlAsync(RawUrl(fullName, path, branch), ct);
 }

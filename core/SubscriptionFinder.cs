@@ -26,15 +26,16 @@ public static partial class SubscriptionFinder
     /// </summary>
     public static async Task<List<SubscriptionLink>> FindLinksAsync(
         GitHubService github, string fullName, CancellationToken ct = default,
-        Action<string>? log = null, string branch = "main")
+        Action<string>? log = null, string branch = "main", FeatureLibrary? library = null)
     {
+        library ??= FeatureLibrary.Default;
         void Log(string msg) => log?.Invoke(msg);
 
         var links = new List<SubscriptionLink>();
         var feature = new RepoFeature { FullName = fullName, LastAnalyzed = System.DateTime.Now, AnalysisCount = 1 };
 
         // 加载已有特征
-        var existing = FeatureLibrary.Get(fullName);
+        var existing = library.Get(fullName);
         if (existing != null)
         {
             feature.AnalysisCount = existing.AnalysisCount + 1;
@@ -47,7 +48,9 @@ public static partial class SubscriptionFinder
             Log($"│  [L1] 特征库命中 {feature.KnownSubPaths.Count} 个已知路径");
             foreach (var path in feature.KnownSubPaths)
             {
-                var content = await github.GetRawFileAsync(fullName, path, branch, ct);
+                var content = Uri.IsWellFormedUriString(path, UriKind.Absolute)
+                    ? await github.GetUrlAsync(path, ct)
+                    : await github.GetRawFileAsync(fullName, path, branch, ct);
                 if (string.IsNullOrEmpty(content) || content.Length < 50) continue;
                 var count = NodeParser.CountNodes(content);
                 if (count > 0)
@@ -64,13 +67,13 @@ public static partial class SubscriptionFinder
             {
                 feature.TotalNodes = links.Max(l => l.NodeCount);
                 feature.IsReliable = true;
-                FeatureLibrary.Save(feature);
+                library.Save(feature);
                 return links;
             }
         }
 
         // ═══ Layer 2: 硬编码已知仓库 (从 JSON 配置动态加载) ═══
-        var known = KnownRepoLoader.GetKnownLinks(fullName);
+        var known = KnownRepoLoader.GetKnownLinks(fullName, branch);
         if (known.Count > 0)
         {
             Log($"│  [L2] 硬编码映射命中 {known.Count} 个链接");
@@ -97,13 +100,13 @@ public static partial class SubscriptionFinder
                     .Select(l => l.Name).ToList();
                 feature.TotalNodes = links.Max(l => l.NodeCount);
                 feature.IsReliable = true;
-                FeatureLibrary.Save(feature);
+                library.Save(feature);
                 return links;
             }
         }
 
         // ═══ Layer 3: 仓库分类 + 文件树探测 ═══
-        var fileTree = await github.GetFileTreeAsync(fullName, ct);
+        var fileTree = await github.GetFileTreeAsync(fullName, ct, branch);
         var readme = await github.GetReadmeAsync(fullName, branch, ct);
         var category = RepoClassifier.Classify(fileTree, readme);
 
@@ -112,7 +115,7 @@ public static partial class SubscriptionFinder
         {
             Log($"│  [L3] 分类结果: 非节点仓库 (工具/面板项目), 跳过");
             feature.Category = RepoCategory.NotNodeRepo;
-            FeatureLibrary.Save(feature);
+            library.Save(feature);
             return new List<SubscriptionLink>();
         }
 
@@ -122,7 +125,7 @@ public static partial class SubscriptionFinder
             var candidates = GetCandidateFiles(fileTree);
             Log($"│  [L3] 文件树: {fileTree.Count} 个文件, 筛选出 {candidates.Count} 个候选 (并发探测)");
             var l3Links = new List<SubscriptionLink>();
-            var l3Semaphore = new SemaphoreSlim(4, 4);
+            using var l3Semaphore = new SemaphoreSlim(4, 4);
             var l3Tasks = candidates
                 .Where(path => !links.Any(l => l.Name == path))
                 .Select(async path =>
@@ -141,7 +144,6 @@ public static partial class SubscriptionFinder
                             IsValid = true, IsAnalyzed = true
                         };
                     }
-                    catch { return null; }
                     finally { l3Semaphore.Release(); }
                 });
 
@@ -155,7 +157,7 @@ public static partial class SubscriptionFinder
                     .Select(l => l.Name).ToList();
                 feature.TotalNodes = links.Max(l => l.NodeCount);
                 feature.IsReliable = true;
-                FeatureLibrary.Save(feature);
+                library.Save(feature);
                 return links;
             }
         }
@@ -163,7 +165,7 @@ public static partial class SubscriptionFinder
         // ═══ Layer 4: 常见路径快速探测 (并发执行, 最多 5 个结果) ═══
         Log($"│  [L4] 并发探测 {CommonPaths.Length} 个常见路径...");
         var l4Links = new List<SubscriptionLink>();
-        var l4Semaphore = new SemaphoreSlim(4, 4);
+        using var l4Semaphore = new SemaphoreSlim(4, 4);
         var l4Tasks = CommonPaths
             .Where(path => !links.Any(l => l.Name == path))
             .Select(async path =>
@@ -182,7 +184,6 @@ public static partial class SubscriptionFinder
                         IsValid = true, IsAnalyzed = true
                     };
                 }
-                catch { return null; }
                 finally { l4Semaphore.Release(); }
             });
 
@@ -196,7 +197,7 @@ public static partial class SubscriptionFinder
                 .Select(l => l.Name).ToList();
             feature.TotalNodes = links.Max(l => l.NodeCount);
             feature.IsReliable = true;
-            FeatureLibrary.Save(feature);
+            library.Save(feature);
             return links;
         }
 
@@ -215,7 +216,7 @@ public static partial class SubscriptionFinder
         {
             feature.Category = RepoCategory.LinkAggregator;
             feature.TotalNodes = links.Max(l => l.NodeCount);
-            FeatureLibrary.Save(feature);
+            library.Save(feature);
             return links;
         }
 
@@ -233,7 +234,7 @@ public static partial class SubscriptionFinder
             }
         }
 
-        FeatureLibrary.Save(feature);
+        library.Save(feature);
         return links;
     }
 
@@ -256,7 +257,7 @@ public static partial class SubscriptionFinder
             if (seen.Contains(url)) continue;
             seen.Add(url);
 
-            var path = match.Groups[3].Value + "/" + match.Groups[4].Value;
+            var path = match.Groups[3].Value;
             if (IsNonNodeFile(path)) continue;
 
             var content = await github.GetUrlAsync(url, ct);
@@ -267,7 +268,7 @@ public static partial class SubscriptionFinder
 
             result.Add(new SubscriptionLink
             {
-                Name = match.Groups[4].Value,
+                Name = path,
                 Url = url, Type = DetectType(path),
                 NodeCount = count, IsValid = true, IsAnalyzed = true
             });
@@ -298,6 +299,6 @@ public static partial class SubscriptionFinder
     private static string BuildUrl(string fullName, string path, string branch)
     {
         var b = string.IsNullOrEmpty(branch) ? "main" : branch;
-        return $"https://raw.githubusercontent.com/{fullName}/{b}/{path}";
+        return Uri.IsWellFormedUriString(path, UriKind.Absolute) ? path : GitHubService.RawUrl(fullName, path, b);
     }
 }

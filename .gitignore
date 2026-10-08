@@ -25,3 +25,13 @@ packages/
 *.zip
 backup_*
 *备份*
+
+# 本地运行凭据与容器数据
+.env
+settings.json
+data/
+secrets/
+
+# 本地执行记录（不属于发布源码）
+.ai/
+.codex-tasks/

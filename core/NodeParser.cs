@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
 
 namespace ProxyNodeHub;
 
@@ -16,12 +18,30 @@ public static class NodeParser
     public static int CountNodes(string? content)
     {
         if (string.IsNullOrEmpty(content)) return 0;
+        // Match YAML's printable-character boundary used by subs-check's Go parser.
+        if (content.Any(c => char.IsControl(c) && c is not ('\t' or '\n' or '\r' or '\u0085'))) return 0;
         var lines = SplitNodeLines(content);
         if (lines.Count > 0) return lines.Count;
-        // Clash YAML: 统计 proxies 下的 name 条目
-        if (content.Contains("proxies:"))
-            return content.Split('\n').Count(l => l.TrimStart().StartsWith("- name:") || l.TrimStart().StartsWith("- {name:"));
-        return 0;
+        try
+        {
+            var yaml = new YamlStream();
+            yaml.Load(new System.IO.StringReader(content));
+            if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root ||
+                !root.Children.TryGetValue(new YamlScalarNode("proxies"), out var value) || value is not YamlSequenceNode proxies)
+                return 0;
+
+            // Count actual node mappings, never names in proxy-groups or empty templates.
+            // This validates subscription structure, not reachability or protocol credentials.
+            return proxies.Children.OfType<YamlMappingNode>().Count(proxy =>
+                !string.IsNullOrWhiteSpace(Scalar(proxy, "name")) &&
+                !string.IsNullOrWhiteSpace(Scalar(proxy, "type")) &&
+                !string.IsNullOrWhiteSpace(Scalar(proxy, "server")) &&
+                int.TryParse(Scalar(proxy, "port"), out var port) && port is >= 1 and <= 65535);
+        }
+        catch (YamlException) { return 0; } // Malformed subscriptions are not publishable; never log their secrets.
+
+        static string? Scalar(YamlMappingNode node, string key) =>
+            node.Children.TryGetValue(new YamlScalarNode(key), out var value) && value is YamlScalarNode scalar ? scalar.Value : null;
     }
 
     /// <summary>把文本拆成节点 URI 行列表 (自动处理整块 Base64)</summary>
